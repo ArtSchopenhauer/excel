@@ -14,7 +14,7 @@ sf = Salesforce(
 ambassadors = sf.query_all("SELECT Name, Office__c, Role__c FROM Employee__c WHERE Status__c = 'Active' AND Office__c != null")["records"]
 metrics = sf.query_all("SELECT Date__c, Ambassador__r.Name, Office__c, AmbShifts__c, Shift_Length__c, Doors__c, Appointments__c FROM Metrics__c WHERE Ambassador__c != null AND AmbShifts__c = 1 AND Office__c != null AND (Date__c = THIS_MONTH OR Date__c = THIS_WEEK)")["records"]
 sales = sf.query_all("SELECT Account_Number__c, CreatedDate, Town_Permit_Submitted__c, Ambassador__r.Name, SalesRepE__r.Name, ZipCodeRegion__r.Name FROM Opportunity WHERE (CreatedDate = THIS_WEEK or CreatedDate = THIS_MONTH or Town_Permit_Submitted__c = THIS_WEEK or Town_Permit_Submitted__c = THIS_MONTH) AND ZipCodeRegion__c != null")["records"]
-appointments = sf.query_all("SELECT Lead__r.Lead_Number__c, Lead__r.ZipCodeRegion__r.Name, Lead__r.Ambassador__r.Name, Lead__r.Sit_Date__c, ScheduledDate__c, Outcome__c, Outcome_Submitted__r.Name, Confirmed__c, Canceled__c, Rescheduled__c, Assigned_To__c FROM Interaction__c WHERE Subject__c = 'Closer Appointment' AND Lead__r.ZipCodeRegion__c != null AND (ScheduledDate__c = THIS_WEEK OR ScheduledDate__c = THIS_MONTH)")["records"]
+appointments = sf.query_all("SELECT Lead__r.Lead_Number__c, Lead__r.Ambassador__r.Office__c, Lead__r.Ambassador__r.Name, Lead__r.Sit_Date__c, ScheduledDate__c, Outcome__c, Outcome_Submitted__r.Name, Assigned_To__r.Name, Confirmed__c, Canceled__c, Rescheduled__c FROM Interaction__c WHERE Subject__c = 'Closer Appointment' AND Lead__c != null AND (ScheduledDate__c = THIS_WEEK OR ScheduledDate__c = THIS_MONTH OR Lead__r.Sit_Date__c = THIS_WEEK or Lead__r.Sit_Date__c = THIS_MONTH)")["records"]
 
 # open pre-existing Excel workbook with openpyxl
 wb = openpyxl.load_workbook('Sales Report.xlsx')
@@ -48,8 +48,10 @@ def fill_cell(data, sheet, row, meta_dict):
 			if data[row][keys[0]]:
 				if str(type(data[row][keys[0]][keys[1]])) != "<class 'collections.OrderedDict'>":
 					v = data[row][keys[0]][keys[1]]
-				else:
+				elif str(type(data[row][keys[0]][keys[1]][keys[2]])) != "<class 'collections.OrderedDict'>":
 					v = data[row][keys[0]][keys[1]][keys[2]]
+				else:
+					v = data[row][keys[0]][keys[1]][keys[2]][keys[3]]
 			else:
 				v = None
 			sheet.cell(row=row+2, column=col_index).value = v
@@ -69,18 +71,31 @@ def fill_sheet(data, sheet_name, meta_dict):
 	for row in range(0, total_rows):
 		fill_cell(data, sheet, row, meta_dict)
 
-# turns Saleseforce field into Python/Excel datetime
+# turns Salesforce datetime response into Python/Excel readable datetime
+def parse_datetime(datetime):
+	try:
+		dt = dateutil.parser.parse(datetime)
+		if dt.tzinfo != None:
+			dt = dt.astimezone(est_zone).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
+		return dt
+	except:
+		return None
+
+# turns datetime fields into Python/Excel readable datetimes
 def format_datetimes(data, date_fields):
 	for record in data:
 		for date_field in date_fields:
-			try:
-				date = dateutil.parser.parse(record[date_field])
-				if date.tzinfo != None:
-					date = date.astimezone(est_zone).replace(tzinfo=None)
-					date = date.replace(hour=0, minute=0, second=0, microsecond=0)
-				record[date_field] = date
-			except:
-				pass
+			if "." not in date_field:
+				v = record[date_field]
+				record[date_field] = parse_datetime(v)
+			else:
+				keys = date_field.split('.')
+				if len(keys) == 2:
+					v = record[keys[0]][keys[1]]
+					record[keys[0]][keys[1]] = parse_datetime(v)
+				elif len(keys) == 3:
+					v = record[keys[0]][keys[1]][keys[2]]
+					record[keys[0]][keys[1]][keys[2]] = parse_datetime(v)
 
 # conbines 'Western Suffolk' and 'Eastern Suffolk' into 'Suffolk'
 def clean_regions(data, region_field):
@@ -99,6 +114,25 @@ def clean_regions(data, region_field):
 				if record[keys[0]][keys[1]][keys[2]] in ['Eastern Suffolk', 'Western Suffolk']:
 					record[keys[0]][keys[1]][keys[2]] = 'Suffolk'
 
+def de_dupe(data, field):
+	ids = []
+	if "." not in field:
+		for record in data:
+			ids.append(record[field])
+		for record in data:
+			count = ids.count(record[field])
+			weight = round(1/float(count), 2)
+			record['Weight'] = weight
+	else:
+		keys = field.split(".")
+		for record in data:
+			ids.append(record[keys[0]][keys[1]])
+		for record in data:
+			count = ids.count(record[keys[0]][keys[1]])
+			weight = round(1/float(count), 2)
+			record['Weight'] = weight
+
+
 # prep and fill in 'Knocking Data - Raw' sheet
 format_datetimes(metrics, ['Date__c'])
 fill_sheet(metrics, 'Knocking Data - Raw', OrderedDict([('Date', 'Date__c'), ('Name', 'Ambassador__r.Name'), ('Office', 'Office__c'), ('Shifts', 'AmbShifts__c'), ('Shift Length', 'Shift_Length__c'), ('Doors', 'Doors__c'), ('Sets', 'Appointments__c')]))
@@ -112,8 +146,9 @@ fill_sheet(sales, 'Sales Data - Raw', OrderedDict([('Account Number', 'Account_N
 fill_sheet(ambassadors, 'Ambassadors - Raw', OrderedDict([('Name', 'Name'), ('Role', 'Role__c'), ('Office', 'Office__c')]))
 
 # prep and fill in 'Appointment Data' - Raw' sheet
-clean_regions(appointments, 'Lead__r.ZipCodeRegion__r.Name')
-fill_sheet(appointments, 'Appointment Data - Raw', OrderedDict([('Lead Number', 'Lead__r.Lead_Number__c'), ('Market', 'Lead__r.ZipCodeRegion__r.Name')]))
+format_datetimes(appointments, ['ScheduledDate__c', 'Lead__r.Sit_Date__c'])
+de_dupe(appointments, 'Lead__r.Lead_Number__c')
+fill_sheet(appointments, 'Appointment Data - Raw', OrderedDict([('Lead Number', 'Lead__r.Lead_Number__c'), ('Ambassador', 'Lead__r.Ambassador__r.Name'), ('Office', 'Lead__r.Ambassador__r.Office__c'), ('Scheduled Date', 'ScheduledDate__c'), ('Assigned To', 'Assigned_To__r.Name'), ('Outcome', 'Outcome__c'), ('Consultant', 'Outcome_Submitted__r.Name'), ('Confirmed', 'Confirmed__c'), ('Canceled', 'Canceled__c'), ('Rescheduled', 'Rescheduled__c'), ('Sit Date', 'Lead__r.Sit_Date__c'), ('Sit Weight', 'Weight')]))
 
 # save Excel workbook
 wb.save('Sales Report.xlsx')
