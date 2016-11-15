@@ -12,15 +12,18 @@ sf = Salesforce(
 
 # get data from Salesforce using instantiated object
 ambassadors = sf.query_all("SELECT Name, Office__c, Role__c FROM Employee__c WHERE Status__c = 'Active' AND Office__c != null")["records"]
-metrics = sf.query_all("SELECT Date__c, Ambassador__r.Name, Office__c, AmbShifts__c, Shift_Length__c, Doors__c, Appointments__c FROM Metrics__c WHERE Ambassador__c != null AND AmbShifts__c = 1 AND Office__c != null AND (Date__c = THIS_MONTH OR Date__c = THIS_WEEK)")["records"]
-sales = sf.query_all("SELECT Account_Number__c, CreatedDate, Town_Permit_Submitted__c, Ambassador__r.Name, SalesRepE__r.Name, ZipCodeRegion__r.Name FROM Opportunity WHERE (CreatedDate = THIS_WEEK or CreatedDate = THIS_MONTH or Town_Permit_Submitted__c = THIS_WEEK or Town_Permit_Submitted__c = THIS_MONTH) AND ZipCodeRegion__c != null")["records"]
-appointments = sf.query_all("SELECT Lead__r.Lead_Number__c, Lead__r.Ambassador__r.Office__c, Lead__r.Ambassador__r.Name, Lead__r.Sit_Date__c, ScheduledDate__c, Outcome__c, Outcome_Submitted__r.Name, Assigned_To__r.Name, Confirmed__c, Canceled__c, Rescheduled__c FROM Interaction__c WHERE Subject__c = 'Closer Appointment' AND Lead__c != null AND (ScheduledDate__c = THIS_WEEK OR ScheduledDate__c = THIS_MONTH OR Lead__r.Sit_Date__c = THIS_WEEK or Lead__r.Sit_Date__c = THIS_MONTH)")["records"]
+metrics = sf.query_all("SELECT Date__c, Ambassador__r.Name, Office__c, AmbShifts__c, Shift_Length__c, Doors__c, Appointments__c FROM Metrics__c WHERE Ambassador__c != null AND AmbShifts__c = 1 AND Office__c != null AND Date__c < TODAY AND (Date__c = THIS_MONTH OR Date__c = THIS_WEEK)")["records"]
+leads = sf.query_all("SELECT Lead_Number__c, Ambassador__r.Name, Ambassador__r.Office__c, Sit_Date__c FROM Lead WHERE (Sit_Date__c = THIS_MONTH OR Sit_Date__c = THIS_WEEK)")["records"]
+sales = sf.query_all("SELECT Account_Number__c, CreatedDate, Town_Permit_Submitted__c, Ambassador__r.Name, SalesRepE__r.Name, Ambassador__r.Office__c FROM Opportunity WHERE (CreatedDate = THIS_WEEK or CreatedDate = THIS_MONTH or Town_Permit_Submitted__c = THIS_WEEK or Town_Permit_Submitted__c = THIS_MONTH)")["records"]
+appointments = sf.query_all("SELECT Lead__r.Lead_Number__c, Lead__r.Ambassador__r.Office__c, Lead__r.Ambassador__r.Name, Lead__r.Sit_Date__c, ScheduledDate__c, Outcome__c, Outcome_Submitted__r.Name, Assigned_To__r.Name, Confirmed__c, Canceled__c, Rescheduled__c FROM Interaction__c WHERE Subject__c = 'Closer Appointment' AND Lead__c != null AND Lead__r.Ambassador__r.Office__c != null AND (ScheduledDate__c = THIS_WEEK OR ScheduledDate__c = THIS_MONTH OR Lead__r.Sit_Date__c = THIS_WEEK or Lead__r.Sit_Date__c = THIS_MONTH) AND ScheduledDate__c <= TODAY")["records"]
+cads = sf.query_all("SELECT Opportunity__r.Account_Number__c, Opportunity__r.Ambassador__r.Name, Opportunity__r.Ambassador__r.Office__c, Opportunity__r.ZipCodeRegion__r.Name, Opportunity__r.SalesRepE__r.Name, Outcome_Submitted__r.Name, InteractionDate__c, Outcome__c, Confirmed__c, Canceled__c, Rescheduled__c FROM Interaction__c WHERE Subject__c = 'CAD Appointment' AND Opportunity__c != null AND (InteractionDate__c = THIS_WEEK OR InteractionDate__c = THIS_MONTH)")["records"]
+
 
 # open pre-existing Excel workbook with openpyxl
 wb = openpyxl.load_workbook('Sales Report.xlsx')
 
 # list data sheets to be refreshed
-data_sheets = ['Knocking Data - Raw', 'Sales Data - Raw', 'Ambassadors - Raw', 'Appointment Data - Raw']
+data_sheets = ['Ambassadors - Raw', 'Knocking Metrics - Raw', 'Leads - Raw', 'Sales Appointments - Raw', 'CAD Appointments - Raw', 'Opportunities - Raw']
 
 # define time zones, for treatment of datetimes returned from Salesforce in UTC
 utc_zone = pytz.timezone('UTC')
@@ -132,23 +135,43 @@ def de_dupe(data, field):
 			weight = round(1/float(count), 2)
 			record['Weight'] = weight
 
+def metric_eligibility(data):
+	sit_outcomes = ["Sale", "Sat, No Verification", "Failed Credit", "Passed Credit, No Sale", "Follow-Up Set", "Permitting / CO Issues"]
+	for record in data:
+		if record['Outcome__c'] in sit_outcomes:
+			record["Appointment Sit"] = 1
+		else:
+			record["Appointment Sit"] = 0
+		if record["Outcome__c"] == "Failed Credit":
+			record["Failed Credit"] = 1
+		else:
+			record["Failed Credit"] = 0
 
 # prep and fill in 'Knocking Data - Raw' sheet
 format_datetimes(metrics, ['Date__c'])
-fill_sheet(metrics, 'Knocking Data - Raw', OrderedDict([('Date', 'Date__c'), ('Name', 'Ambassador__r.Name'), ('Office', 'Office__c'), ('Shifts', 'AmbShifts__c'), ('Shift Length', 'Shift_Length__c'), ('Doors', 'Doors__c'), ('Sets', 'Appointments__c')]))
+fill_sheet(metrics, 'Knocking Metrics - Raw', OrderedDict([('Date', 'Date__c'), ('Name', 'Ambassador__r.Name'), ('Office', 'Office__c'), ('Shifts', 'AmbShifts__c'), ('Shift Length', 'Shift_Length__c'), ('Doors', 'Doors__c'), ('Sets', 'Appointments__c')]))
 
 # prep and fill in 'Sales Data - Raw' sheet
 format_datetimes(sales, ['CreatedDate', 'Town_Permit_Submitted__c'])
-clean_regions(sales, 'ZipCodeRegion__r.Name')
-fill_sheet(sales, 'Sales Data - Raw', OrderedDict([('Account Number', 'Account_Number__c'), ('Sale Date', 'CreatedDate'), ('Ambassador', 'Ambassador__r.Name'), ('Market', 'ZipCodeRegion__r.Name'), ('Consultant', 'SalesRepE__r.Name'), ('Permit Submitted', 'Town_Permit_Submitted__c')]))
+fill_sheet(sales, 'Opportunities - Raw', OrderedDict([('Account Number', 'Account_Number__c'), ('Sale Date', 'CreatedDate'), ('Ambassador', 'Ambassador__r.Name'), ('Market', 'Ambassador__r.Office__c'), ('Consultant', 'SalesRepE__r.Name'), ('Permit Submitted', 'Town_Permit_Submitted__c')]))
 
 # prep and fill in 'Ambassadors - Raw' sheet
 fill_sheet(ambassadors, 'Ambassadors - Raw', OrderedDict([('Name', 'Name'), ('Role', 'Role__c'), ('Office', 'Office__c')]))
 
+# prep and fill in 'Leads - Raw' sheet
+format_datetimes(leads, ['Sit_Date__c'])
+fill_sheet(leads, 'Leads - Raw', OrderedDict([('Lead Number', 'Lead_Number__c'), ('Ambassador', 'Ambassador__r.Name'), ('Office', 'Ambassador__r.Office__c'), ('Sit Date', 'Sit_Date__c')]))
+
 # prep and fill in 'Appointment Data' - Raw' sheet
 format_datetimes(appointments, ['ScheduledDate__c', 'Lead__r.Sit_Date__c'])
 de_dupe(appointments, 'Lead__r.Lead_Number__c')
-fill_sheet(appointments, 'Appointment Data - Raw', OrderedDict([('Lead Number', 'Lead__r.Lead_Number__c'), ('Ambassador', 'Lead__r.Ambassador__r.Name'), ('Office', 'Lead__r.Ambassador__r.Office__c'), ('Scheduled Date', 'ScheduledDate__c'), ('Assigned To', 'Assigned_To__r.Name'), ('Outcome', 'Outcome__c'), ('Consultant', 'Outcome_Submitted__r.Name'), ('Confirmed', 'Confirmed__c'), ('Canceled', 'Canceled__c'), ('Rescheduled', 'Rescheduled__c'), ('Sit Date', 'Lead__r.Sit_Date__c'), ('Sit Weight', 'Weight')]))
+metric_eligibility(appointments)
+fill_sheet(appointments, 'Sales Appointments - Raw', OrderedDict([('Lead Number', 'Lead__r.Lead_Number__c'), ('Ambassador', 'Lead__r.Ambassador__r.Name'), ('Office', 'Lead__r.Ambassador__r.Office__c'), ('Scheduled Date', 'ScheduledDate__c'), ('Assigned To', 'Assigned_To__r.Name'), ('Outcome', 'Outcome__c'), ('Consultant', 'Outcome_Submitted__r.Name'), ('Confirmed', 'Confirmed__c'), ('Canceled', 'Canceled__c'), ('Rescheduled', 'Rescheduled__c'), ('Lead Sit Date', 'Lead__r.Sit_Date__c'), ('De-Dupe Weight', 'Weight'), ('Appointment Sit', 'Appointment Sit'), ('Failed Credit', 'Failed Credit')]))
+
+# prep and fill in 'CAD Data - Raw' sheet
+format_datetimes(cads, ['InteractionDate__c'])
+clean_regions(cads, 'Opportunity__r.ZipCodeRegion__r.Name')
+fill_sheet(cads, 'CAD Appointments - Raw', OrderedDict([('Account Number', 'Opportunity__r.Account_Number__c'), ('Ambassador', 'Opportunity__r.Ambassador__r.Name'), ('Ambassador Office', 'Opportunity__r.Ambassador__r.Office__c'), ('Market', 'Opportunity__r.ZipCodeRegion__r.Name'), ('Consultant', 'Opportunity__r.SalesRepE__r.Name'), ('CAD Specialist', 'Outcome_Submitted__r.Name'), ('Outcome Date', 'InteractionDate__c'), ('Outcome', 'Outcome__c'), ('Confirmed', 'Confirmed__c'), ('Canceled', 'Canceled__c'), ('Rescheduled', 'Rescheduled__c')]))
 
 # save Excel workbook
 wb.save('Sales Report.xlsx')
