@@ -11,19 +11,19 @@ sf = Salesforce(
     security_token='yWlJG8lAKCq1pTBkbBMSVcKg')
 
 # get data from Salesforce using instantiated object
-ambassadors = sf.query_all("SELECT Name, Office__c, Role__c FROM Employee__c WHERE Status__c = 'Active' AND Office__c != null")["records"]
+employees = sf.query_all("SELECT Name, Office__c, Role__c, CAD_Specialist__c, CountyRegion__c, CountyRegion__r.Name FROM Employee__c WHERE Status__c = 'Active'")["records"]
 metrics = sf.query_all("SELECT Date__c, Ambassador__r.Name, Office__c, AmbShifts__c, Shift_Length__c, Doors__c, Appointments__c FROM Metrics__c WHERE Ambassador__c != null AND AmbShifts__c = 1 AND Office__c != null AND Date__c < TODAY AND (Date__c = THIS_MONTH OR Date__c = THIS_WEEK)")["records"]
 leads = sf.query_all("SELECT Lead_Number__c, Ambassador__r.Name, Ambassador__r.Office__c, Sit_Date__c FROM Lead WHERE (Sit_Date__c = THIS_MONTH OR Sit_Date__c = THIS_WEEK)")["records"]
-sales = sf.query_all("SELECT Account_Number__c, CreatedDate, Town_Permit_Submitted__c, Ambassador__r.Name, SalesRepE__r.Name, Ambassador__r.Office__c FROM Opportunity WHERE (CreatedDate = THIS_WEEK or CreatedDate = THIS_MONTH or Town_Permit_Submitted__c = THIS_WEEK or Town_Permit_Submitted__c = THIS_MONTH)")["records"]
-appointments = sf.query_all("SELECT Lead__r.Lead_Number__c, Lead__r.Ambassador__r.Office__c, Lead__r.Ambassador__r.Name, Lead__r.Sit_Date__c, ScheduledDate__c, Outcome__c, Outcome_Submitted__r.Name, Assigned_To__r.Name, Confirmed__c, Canceled__c, Rescheduled__c FROM Interaction__c WHERE Subject__c = 'Closer Appointment' AND Lead__c != null AND Lead__r.Ambassador__r.Office__c != null AND (ScheduledDate__c = THIS_WEEK OR ScheduledDate__c = THIS_MONTH OR Lead__r.Sit_Date__c = THIS_WEEK or Lead__r.Sit_Date__c = THIS_MONTH) AND ScheduledDate__c <= TODAY")["records"]
-cads = sf.query_all("SELECT Opportunity__r.Account_Number__c, Opportunity__r.Ambassador__r.Name, Opportunity__r.Ambassador__r.Office__c, Opportunity__r.ZipCodeRegion__r.Name, Opportunity__r.SalesRepE__r.Name, Outcome_Submitted__r.Name, InteractionDate__c, Outcome__c, Confirmed__c, Canceled__c, Rescheduled__c FROM Interaction__c WHERE Subject__c = 'CAD Appointment' AND Opportunity__c != null AND (InteractionDate__c = THIS_WEEK OR InteractionDate__c = THIS_MONTH)")["records"]
+sales = sf.query_all("SELECT Account_Number__c, CreatedDate, Town_Permit_Submitted__c, InstallDate__c, Ambassador__r.Name, SalesRepE__r.Name, Ambassador__r.Office__c, ZipCodeRegion__r.Name, SalesRepE__r.CountyRegion__r.Name FROM Opportunity WHERE (CreatedDate = THIS_WEEK or CreatedDate = THIS_MONTH or Town_Permit_Submitted__c = THIS_WEEK or Town_Permit_Submitted__c = THIS_MONTH or InstallDate__c = THIS_WEEK or InstallDate__c = THIS_MONTH) AND Is_Additional_Meter__c = null AND CreatedDate < TODAY")["records"]
+appointments = sf.query_all("SELECT Lead__r.Lead_Number__c, Lead__r.Ambassador__r.Office__c, Lead__r.Ambassador__r.Name, Lead__r.Sit_Date__c, Lead__r.ZipCodeRegion__r.Name, ScheduledDate__c, Outcome__c, Outcome_Submitted__r.Name, Outcome_Submitted__r.CountyRegion__c, Assigned_To__r.Name, Assigned_To__r.CountyRegion__r.Name, Assigned_To__r.Office__c, Confirmed__c, Canceled__c, Rescheduled__c FROM Interaction__c WHERE Subject__c = 'Closer Appointment' AND Lead__c != null AND Lead__r.ZipCodeRegion__r.Name != null AND (ScheduledDate__c = THIS_WEEK OR ScheduledDate__c = THIS_MONTH OR Lead__r.Sit_Date__c = THIS_WEEK or Lead__r.Sit_Date__c = THIS_MONTH) AND ScheduledDate__c < TODAY")["records"]
+cads = sf.query_all("SELECT Opportunity__r.Account_Number__c, Opportunity__r.Ambassador__r.Name, Opportunity__r.Ambassador__r.Office__c, Opportunity__r.ZipCodeRegion__r.Name, Opportunity__r.SalesRepE__r.Name, Outcome_Submitted__r.Name, Outcome_Submitted__r.CountyRegion__c, InteractionDate__c, Outcome__c, Confirmed__c, Canceled__c, Rescheduled__c FROM Interaction__c WHERE Subject__c = 'CAD Appointment' AND Opportunity__c != null AND (InteractionDate__c = THIS_WEEK OR InteractionDate__c = THIS_MONTH) and InteractionDate__c < TODAY")["records"]
 
 
 # open pre-existing Excel workbook with openpyxl
 wb = openpyxl.load_workbook('Sales Report.xlsx')
 
 # list data sheets to be refreshed
-data_sheets = ['Ambassadors - Raw', 'Knocking Metrics - Raw', 'Leads - Raw', 'Sales Appointments - Raw', 'CAD Appointments - Raw', 'Opportunities - Raw']
+data_sheets = ['Employees - Raw', 'Knocking Metrics - Raw', 'Leads - Raw', 'Sales Appointments - Raw', 'CAD Appointments - Raw', 'Opportunities - Raw']
 
 # define time zones, for treatment of datetimes returned from Salesforce in UTC
 utc_zone = pytz.timezone('UTC')
@@ -74,6 +74,42 @@ def fill_sheet(data, sheet_name, meta_dict):
 	for row in range(0, total_rows):
 		fill_cell(data, sheet, row, meta_dict)
 
+# refreshes columns in summary tabs with employee records
+def fill_column(data, sheet_name, field_column_map, row, criteria_field=None):
+	sheet = wb.get_sheet_by_name(str(sheet_name))
+	for key in field_column_map:
+		column_row = row
+		field = key
+		column = field_column_map[key]
+		for i in range(row, 1001):
+			sheet.cell(row=i, column=column).value = None
+			i += 1
+		if criteria_field != None:
+			for record in data:
+				if record[criteria_field] != None:
+					if "." in field:
+						field_keys = field.split('.')
+						if record[field_keys[0]]:
+							v = record[field_keys[0]][field_keys[1]]
+							sheet.cell(row=column_row, column=column).value = v
+							column_row += 1
+					else:
+						v = record[field]
+						sheet.cell(row=column_row, column=column).value = v
+						column_row += 1
+		else:
+			for record in data:
+				if "." in field:
+					field_keys = field.split('.')
+					if record[field_keys[0]]:
+						v = record[field_keys[0]][field_keys[1]]
+						sheet.cell(row=column_row, column=column).value = v
+						column_row += 1
+				else:
+					v = record[field]
+					sheet.cell(row=column_row, column=column).value = v
+					column_row += 1
+
 # turns Salesforce datetime response into Python/Excel readable datetime
 def parse_datetime(datetime):
 	try:
@@ -101,21 +137,28 @@ def format_datetimes(data, date_fields):
 					record[keys[0]][keys[1]][keys[2]] = parse_datetime(v)
 
 # conbines 'Western Suffolk' and 'Eastern Suffolk' into 'Suffolk'
-def clean_regions(data, region_field):
-	if '.' not in region_field:
-		for record in data:
-			if record[region_field] in ['Eastern Suffolk', 'Western Suffolk']:
-				record[region_field] = 'Suffolk'
-	else:
-		keys = region_field.split('.')
-		if len(keys) == 2:
+def clean_regions(data, region_fields):
+	for region_field in region_fields:
+		if '.' not in region_field:
 			for record in data:
-				if record[keys[0]][keys[1]] in ['Eastern Suffolk', 'Western Suffolk']:
-					record[keys[0]][keys[1]] = 'Suffolk'
-		elif len(keys) == 3:
-			for record in data:
-				if record[keys[0]][keys[1]][keys[2]] in ['Eastern Suffolk', 'Western Suffolk']:
-					record[keys[0]][keys[1]][keys[2]] = 'Suffolk'
+				if record[region_field] in ['Eastern Suffolk', 'Western Suffolk']:
+					record[region_field] = 'Suffolk'
+		else:
+			keys = region_field.split('.')
+			if len(keys) == 2:
+				for record in data:
+					try:
+						if record[keys[0]][keys[1]] in ['Eastern Suffolk', 'Western Suffolk']:
+							record[keys[0]][keys[1]] = 'Suffolk'
+					except:
+						pass
+			elif len(keys) == 3:
+				for record in data:
+					try:
+						if record[keys[0]][keys[1]][keys[2]] in ['Eastern Suffolk', 'Western Suffolk']:
+							record[keys[0]][keys[1]][keys[2]] = 'Suffolk'
+					except:
+						pass
 
 def de_dupe(data, field):
 	ids = []
@@ -142,21 +185,34 @@ def metric_eligibility(data):
 			record["Appointment Sit"] = 1
 		else:
 			record["Appointment Sit"] = 0
+		if record["Outcome__c"] in ["Sale", "Failed Credit", "Passed Credit, No Sale"]:
+			record["Run Credit"] = 1
+		else:
+			record["Run Credit"] = 0
 		if record["Outcome__c"] == "Failed Credit":
 			record["Failed Credit"] = 1
 		else:
 			record["Failed Credit"] = 0
+		if record["Outcome_Submitted__r"]:
+			if record["Outcome_Submitted__r"]["CountyRegion__c"] != None and record["Outcome__c"] not in ["Postponed", "No Show"]:
+				record["CAD Sit"] = 1
+			else:
+				record["CAD Sit"] = 0
+		else:
+			record["CAD Sit"] = 0
 
 # prep and fill in 'Knocking Data - Raw' sheet
 format_datetimes(metrics, ['Date__c'])
 fill_sheet(metrics, 'Knocking Metrics - Raw', OrderedDict([('Date', 'Date__c'), ('Name', 'Ambassador__r.Name'), ('Office', 'Office__c'), ('Shifts', 'AmbShifts__c'), ('Shift Length', 'Shift_Length__c'), ('Doors', 'Doors__c'), ('Sets', 'Appointments__c')]))
 
 # prep and fill in 'Sales Data - Raw' sheet
-format_datetimes(sales, ['CreatedDate', 'Town_Permit_Submitted__c'])
-fill_sheet(sales, 'Opportunities - Raw', OrderedDict([('Account Number', 'Account_Number__c'), ('Sale Date', 'CreatedDate'), ('Ambassador', 'Ambassador__r.Name'), ('Market', 'Ambassador__r.Office__c'), ('Consultant', 'SalesRepE__r.Name'), ('Permit Submitted', 'Town_Permit_Submitted__c')]))
+format_datetimes(sales, ['CreatedDate', 'Town_Permit_Submitted__c', 'InstallDate__c'])
+clean_regions(sales, ['ZipCodeRegion__r.Name', 'SalesRepE__r.CountyRegion__r.Name'])
+fill_sheet(sales, 'Opportunities - Raw', OrderedDict([('Account Number', 'Account_Number__c'), ('Sale Date', 'CreatedDate'), ('Ambassador', 'Ambassador__r.Name'), ('Ambassador - Office', 'Ambassador__r.Office__c'), ('Market', 'ZipCodeRegion__r.Name'), ('Consultant', 'SalesRepE__r.Name'), ('Consultant - Office', 'SalesRepE__r.CountyRegion__r.Name'), ('Permit Submitted', 'Town_Permit_Submitted__c'), ('Install Date', 'InstallDate__c')]))
 
-# prep and fill in 'Ambassadors - Raw' sheet
-fill_sheet(ambassadors, 'Ambassadors - Raw', OrderedDict([('Name', 'Name'), ('Role', 'Role__c'), ('Office', 'Office__c')]))
+# prep and fill in 'Employees - Raw' sheet
+clean_regions(employees, ['CountyRegion__r.Name'])
+fill_sheet(employees, 'Employees - Raw', OrderedDict([('Name', 'Name'), ('Role', 'Role__c'), ('Ambassador - Office', 'Office__c'), ('Consultant - Office', 'CountyRegion__r.Name'), ('CAD Specialist?', 'CAD_Specialist__c')]))
 
 # prep and fill in 'Leads - Raw' sheet
 format_datetimes(leads, ['Sit_Date__c'])
@@ -165,13 +221,21 @@ fill_sheet(leads, 'Leads - Raw', OrderedDict([('Lead Number', 'Lead_Number__c'),
 # prep and fill in 'Appointment Data' - Raw' sheet
 format_datetimes(appointments, ['ScheduledDate__c', 'Lead__r.Sit_Date__c'])
 de_dupe(appointments, 'Lead__r.Lead_Number__c')
+clean_regions(appointments, ['Lead__r.ZipCodeRegion__r.Name', 'Assigned_To__r.CountyRegion__r.Name'])
 metric_eligibility(appointments)
-fill_sheet(appointments, 'Sales Appointments - Raw', OrderedDict([('Lead Number', 'Lead__r.Lead_Number__c'), ('Ambassador', 'Lead__r.Ambassador__r.Name'), ('Office', 'Lead__r.Ambassador__r.Office__c'), ('Scheduled Date', 'ScheduledDate__c'), ('Assigned To', 'Assigned_To__r.Name'), ('Outcome', 'Outcome__c'), ('Consultant', 'Outcome_Submitted__r.Name'), ('Confirmed', 'Confirmed__c'), ('Canceled', 'Canceled__c'), ('Rescheduled', 'Rescheduled__c'), ('Lead Sit Date', 'Lead__r.Sit_Date__c'), ('De-Dupe Weight', 'Weight'), ('Appointment Sit', 'Appointment Sit'), ('Failed Credit', 'Failed Credit')]))
+fill_sheet(appointments, 'Sales Appointments - Raw', OrderedDict([('Lead Number', 'Lead__r.Lead_Number__c'), ('Ambassador', 'Lead__r.Ambassador__r.Name'), ('Office', 'Lead__r.Ambassador__r.Office__c'), ('Market', 'Lead__r.ZipCodeRegion__r.Name'), ('Scheduled Date', 'ScheduledDate__c'), ('Assigned To', 'Assigned_To__r.Name'), ('Assigned To - Office', 'Assigned_To__r.CountyRegion__r.Name'), ('Outcome', 'Outcome__c'), ('Consultant', 'Outcome_Submitted__r.Name'), ('Confirmed', 'Confirmed__c'), ('Canceled', 'Canceled__c'), ('Rescheduled', 'Rescheduled__c'), ('Lead Sit Date', 'Lead__r.Sit_Date__c'), ('De-Dupe Weight', 'Weight'), ('Appointment Sit', 'Appointment Sit'), ('Failed Credit', 'Failed Credit'), ('Run Credit', 'Run Credit')]))
 
 # prep and fill in 'CAD Data - Raw' sheet
 format_datetimes(cads, ['InteractionDate__c'])
-clean_regions(cads, 'Opportunity__r.ZipCodeRegion__r.Name')
-fill_sheet(cads, 'CAD Appointments - Raw', OrderedDict([('Account Number', 'Opportunity__r.Account_Number__c'), ('Ambassador', 'Opportunity__r.Ambassador__r.Name'), ('Ambassador Office', 'Opportunity__r.Ambassador__r.Office__c'), ('Market', 'Opportunity__r.ZipCodeRegion__r.Name'), ('Consultant', 'Opportunity__r.SalesRepE__r.Name'), ('CAD Specialist', 'Outcome_Submitted__r.Name'), ('Outcome Date', 'InteractionDate__c'), ('Outcome', 'Outcome__c'), ('Confirmed', 'Confirmed__c'), ('Canceled', 'Canceled__c'), ('Rescheduled', 'Rescheduled__c')]))
+clean_regions(cads, ['Opportunity__r.ZipCodeRegion__r.Name'])
+metric_eligibility(cads)
+fill_sheet(cads, 'CAD Appointments - Raw', OrderedDict([('Account Number', 'Opportunity__r.Account_Number__c'), ('Ambassador', 'Opportunity__r.Ambassador__r.Name'), ('Ambassador Office', 'Opportunity__r.Ambassador__r.Office__c'), ('Market', 'Opportunity__r.ZipCodeRegion__r.Name'), ('Consultant', 'Opportunity__r.SalesRepE__r.Name'), ('CAD Specialist', 'Outcome_Submitted__r.Name'), ('Outcome Date', 'InteractionDate__c'), ('Outcome', 'Outcome__c'), ('Confirmed', 'Confirmed__c'), ('Canceled', 'Canceled__c'), ('Rescheduled', 'Rescheduled__c'), ('CAD Sit', 'CAD Sit')]))
+
+# fill ambassadors in 'Ambassadors - By Rep' sheet
+fill_column(employees,'Ambassadors - By Rep', {'Name': 1, 'Office__c': 2}, 10, 'Office__c')
+
+# fill consultants in 'Ambassadors - By Rep' sheet
+fill_column(employees,'Consultants - By Rep', {'Name': 1, 'CountyRegion__r.Name': 2}, 10, 'CountyRegion__c')
 
 # save Excel workbook
 wb.save('Sales Report.xlsx')
