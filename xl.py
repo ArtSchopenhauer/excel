@@ -3,6 +3,8 @@ import pytz
 from collections import OrderedDict
 import dateutil.parser
 from simple_salesforce import Salesforce
+import datetime
+import json
 
 # instantiate simple_salesforce object with appropriate Salesforce login credentials
 sf = Salesforce(
@@ -239,3 +241,9 @@ fill_column(employees,'Consultants - By Rep', {'Name': 1, 'CountyRegion__r.Name'
 
 # save Excel workbook
 wb.save('Sales Report.xlsx')
+
+# store today's date to file; script that sends mail will check date before sending, to make sure this script has run
+today = datetime.datetime.now().day
+data_file = open("/root/lboard/report_check.json", "w")
+json.dump(today, data_file)
+data_file.close()
